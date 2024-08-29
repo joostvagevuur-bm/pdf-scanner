@@ -43,7 +43,8 @@ Reason: [Explain why this page should be included or excluded]
         "model": "claude-3-sonnet-20240229",
         "messages": [
             {"role": "user", "content": prompt}
-        ]
+        ],
+        "max_tokens": 1000
     }
 
     response = requests.post(CLAUDE_API_URL, headers=headers, json=data)
@@ -86,7 +87,8 @@ Text to analyze:
         "model": "claude-3-sonnet-20240229",
         "messages": [
             {"role": "user", "content": prompt}
-        ]
+        ],
+        "max_tokens": 1000
     }
 
     response = requests.post(CLAUDE_API_URL, headers=headers, json=data)
