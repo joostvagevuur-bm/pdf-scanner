@@ -1,11 +1,11 @@
 import streamlit as st
 import os
 import fitz  # PyMuPDF
-from openai import OpenAI
 import re
 import pandas as pd
+from tqdm import tqdm
 import tempfile
-import json
+from openai import OpenAI
 
 def remove_special_characters(text):
     return re.sub(r"\s+", " ", text)
@@ -31,6 +31,7 @@ Reason: [Explain why this page should be included or excluded]
     )
 
     result = response.choices[0].message.content
+    # Parse the result into a dictionary
     lines = result.split('\n')
     parsed_result = {}
     for line in lines:
@@ -40,33 +41,34 @@ Reason: [Explain why this page should be included or excluded]
 
     return parsed_result
 
-def extract_projects(text, client):
-    prompt = f"""Analyze the following text and extract specific crane projects mentioned. For each project, provide:
-1. The number and type of cranes (e.g., RTG, STS)
-2. The location (port name and country if available)
+def extract_project_details(page_content, client):
+    prompt = f"""Analyze the following page content and extract specific crane projects mentioned. For each project, provide the number and type of cranes, and the location (port name and country if available).
 
-Format the output as a list of strings, each in the format: "[Number] [Type] cranes in [Location]"
+Page content:
+{page_content}
 
-If multiple projects are mentioned, list each one separately. If the exact number is not specified, use "Multiple" for the number.
+Format your response as a list, with each item in the following format:
+- [Number] [Type] crane(s) in [Location]
 
-Text to analyze:
-{text}
+Example:
+- 2 RTG cranes in the Port of Santos, Brazil
+- 5 STS cranes in the Port of Rotterdam, Netherlands
+
+If no specific projects are mentioned, respond with "No specific projects mentioned."
 """
 
     response = client.chat.completions.create(
         model="chatgpt-4o-latest",
         messages=[
-            {"role": "system", "content": "You are a helpful assistant that extracts project information."},
+            {"role": "system", "content": "You are a helpful assistant that extracts specific project details from document content."},
             {"role": "user", "content": prompt}
         ]
     )
 
-    result = response.choices[0].message.content
-    return result.split('\n')
+    return response.choices[0].message.content
 
 def process_pdfs(uploaded_files, api_key):
     results = []
-    projects = []
     client = OpenAI(api_key=api_key)
     
     for uploaded_file in uploaded_files:
@@ -88,19 +90,20 @@ def process_pdfs(uploaded_files, api_key):
                 'page': i + 1,
                 'summary': analysis.get('Summary', 'N/A'),
                 'include_or_exclude': analysis.get('Include or Exclude', 'N/A'),
-                'reason': analysis.get('Reason', 'N/A')
+                'reason': analysis.get('Reason', 'N/A'),
+                'projects': 'N/A'
             }
             
-            if analysis.get('Include or Exclude') == 'Include':
-                page_projects = extract_projects(text, client)
-                projects.extend([(uploaded_file.name, i + 1, project) for project in page_projects])
+            if result['include_or_exclude'].lower() == 'include':
+                projects = extract_project_details(text, client)
+                result['projects'] = projects
             
             results.append(result)
         
         doc.close()
         os.unlink(tmp_file_path)
     
-    return results, projects
+    return results
 
 def main():
     st.title("PDF Analysis App")
@@ -112,28 +115,28 @@ def main():
     if uploaded_files and api_key:
         if st.button("Analyze PDFs"):
             with st.spinner("Analyzing PDFs..."):
-                results, projects = process_pdfs(uploaded_files, api_key)
+                results = process_pdfs(uploaded_files, api_key)
             
             if results:
-                df = pd.DataFrame(results)
                 st.success("Analysis complete!")
-                st.dataframe(df)
                 
+                # Display projects for included pages
+                st.subheader("Extracted Projects")
+                for result in results:
+                    if result['include_or_exclude'].lower() == 'include':
+                        st.write(f"**File:** {result['filename']}, **Page:** {result['page']}")
+                        st.write(result['projects'])
+                        st.write("---")
+                
+                # Prepare CSV for download
+                df = pd.DataFrame(results)
                 csv = df.to_csv(index=False).encode('utf-8')
                 st.download_button(
-                    label="Download results as CSV",
+                    label="Download full results as CSV",
                     data=csv,
                     file_name="results.csv",
                     mime="text/csv",
                 )
-                
-                if projects:
-                    st.button("Show Projects", key="show_projects")
-                    if st.session_state.show_projects:
-                        project_df = pd.DataFrame(projects, columns=['Filename', 'Page', 'Project'])
-                        st.dataframe(project_df)
-                else:
-                    st.info("No projects were found in the analyzed pages.")
             else:
                 st.warning("No results were generated. Please check your PDF files and try again.")
     else:
