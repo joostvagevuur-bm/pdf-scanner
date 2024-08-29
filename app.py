@@ -67,8 +67,30 @@ def process_pdfs(uploaded_files, api_key):
     results = []
     projects = []
     client = OpenAI(api_key=api_key)
-    
-    total_pages = sum(len(fitz.open(tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name)) for uploaded_file in uploaded_files)
+
+    total_pages = 0
+    for uploaded_file in uploaded_files:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+            tmp_file.write(uploaded_file.getvalue())
+            tmp_file_path = tmp_file.name
+
+        # Only proceed if the file is not empty and is a valid PDF
+        if os.path.getsize(tmp_file_path) == 0:
+            st.warning(f"The file {uploaded_file.name} is empty and will be skipped.")
+            os.unlink(tmp_file_path)
+            continue
+        
+        try:
+            doc = fitz.open(tmp_file_path)
+            total_pages += len(doc)
+            doc.close()
+        except Exception as e:
+            st.error(f"Error processing file {uploaded_file.name}: {e}")
+            os.unlink(tmp_file_path)
+            continue
+        
+        os.unlink(tmp_file_path)
+
     progress_bar = st.progress(0)
     current_page = 0
     
@@ -76,12 +98,6 @@ def process_pdfs(uploaded_files, api_key):
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
             tmp_file.write(uploaded_file.getvalue())
             tmp_file_path = tmp_file.name
-
-        # Check if the file is empty before proceeding
-        if os.path.getsize(tmp_file_path) == 0:
-            st.warning(f"The file {uploaded_file.name} is empty and will be skipped.")
-            os.unlink(tmp_file_path)
-            continue
 
         doc = fitz.open(tmp_file_path)
         
