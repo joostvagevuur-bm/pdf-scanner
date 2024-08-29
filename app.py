@@ -22,7 +22,7 @@ Reason: [Explain why this page should be included or excluded]
 """
 
     response = client.chat.completions.create(
-        model="gpt-4-turbo-preview",
+        model="gpt-4o-latest",
         messages=[
             {"role": "system", "content": "You are a helpful assistant that analyzes document content."},
             {"role": "user", "content": prompt}
@@ -53,7 +53,7 @@ Text to analyze:
 """
 
     response = client.chat.completions.create(
-        model="gpt-4-turbo-preview",
+        model="gpt-4o-latest",
         messages=[
             {"role": "system", "content": "You are a helpful assistant that extracts project information."},
             {"role": "user", "content": prompt}
@@ -67,6 +67,10 @@ def process_pdfs(uploaded_files, api_key):
     results = []
     projects = []
     client = OpenAI(api_key=api_key)
+    
+    total_pages = sum(len(fitz.open(tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name)) for uploaded_file in uploaded_files)
+    progress_bar = st.progress(0)
+    current_page = 0
     
     for uploaded_file in uploaded_files:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
@@ -96,9 +100,8 @@ def process_pdfs(uploaded_files, api_key):
             
             results.append(result)
             
-            # Add a progress indicator
-            progress = (i + 1) / len(doc)
-            st.progress(progress)
+            current_page += 1
+            progress_bar.progress(current_page / total_pages)
         
         doc.close()
         os.unlink(tmp_file_path)
@@ -130,7 +133,6 @@ def main():
     
     if st.session_state.results:
         df = pd.DataFrame(st.session_state.results)
-        st.dataframe(df)
         
         csv = df.to_csv(index=False).encode('utf-8')
         st.download_button(
@@ -143,7 +145,8 @@ def main():
         if st.session_state.projects:
             if st.button("Show Projects"):
                 project_df = pd.DataFrame(st.session_state.projects, columns=['Filename', 'Page', 'Project'])
-                st.dataframe(project_df)
+                st.write("### Extracted Projects")
+                st.table(project_df)
         else:
             st.info("No projects were found in the analyzed pages.")
     elif uploaded_files:
