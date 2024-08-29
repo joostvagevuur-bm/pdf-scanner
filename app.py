@@ -77,6 +77,12 @@ def process_pdfs(uploaded_files, api_key):
             tmp_file.write(uploaded_file.getvalue())
             tmp_file_path = tmp_file.name
 
+        # Check if the file is empty before proceeding
+        if os.path.getsize(tmp_file_path) == 0:
+            st.warning(f"The file {uploaded_file.name} is empty and will be skipped.")
+            os.unlink(tmp_file_path)
+            continue
+
         doc = fitz.open(tmp_file_path)
         
         for i in range(len(doc)):
