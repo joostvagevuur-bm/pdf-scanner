@@ -1,11 +1,10 @@
 import streamlit as st
 import os
 import fitz  # PyMuPDF
+from openai import OpenAI
 import re
 import pandas as pd
 import tempfile
-from openai import OpenAI
-import time
 
 def remove_special_characters(text):
     return re.sub(r"\s+", " ", text)
@@ -22,70 +21,51 @@ Include or Exclude: [State whether this page should be included or excluded base
 Reason: [Explain why this page should be included or excluded]
 """
 
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = client.chat.completions.create(
-                model="chatgpt-4o-latest",
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that analyzes document content."},
-                    {"role": "user", "content": prompt}
-                ]
-            )
+    response = client.chat.completions.create(
+        model="gpt-4-turbo-preview",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that analyzes document content."},
+            {"role": "user", "content": prompt}
+        ]
+    )
 
-            result = response.choices[0].message.content
-            lines = result.split('\n')
-            parsed_result = {}
-            for line in lines:
-                if ':' in line:
-                    key, value = line.split(':', 1)
-                    parsed_result[key.strip()] = value.strip()
-            return parsed_result
-        except Exception as e:
-            if attempt < max_retries - 1:
-                time.sleep(2)  # Wait for 2 seconds before retrying
-                continue
-            else:
-                st.error(f"Error in analyze_page: {str(e)}")
-                return {"Summary": "Error in analysis", "Include or Exclude": "Exclude", "Reason": "Error occurred"}
+    result = response.choices[0].message.content
+    lines = result.split('\n')
+    parsed_result = {}
+    for line in lines:
+        if ':' in line:
+            key, value = line.split(':', 1)
+            parsed_result[key.strip()] = value.strip()
 
-def extract_project_details(page_content, client):
-    prompt = f"""Analyze the following page content and extract specific crane projects mentioned. For each project, provide the number and type of cranes, and the location (port name and country if available).
+    return parsed_result
 
-Page content:
-{page_content}
+def extract_projects(text, client):
+    prompt = f"""Analyze the following text and extract specific crane projects mentioned. For each project, provide:
+1. The number and type of cranes (e.g., RTG, STS)
+2. The location (port name and country if available)
 
-Format your response as a list, with each item in the following format:
-- [Number] [Type] crane(s) in [Location]
+Format the output as a list of strings, each in the format: "[Number] [Type] cranes in [Location]"
 
-Example:
-- 2 RTG cranes in the Port of Santos, Brazil
-- 5 STS cranes in the Port of Rotterdam, Netherlands
+If multiple projects are mentioned, list each one separately. If the exact number is not specified, use "Multiple" for the number.
 
-If no specific projects are mentioned, respond with "No specific projects mentioned."
+Text to analyze:
+{text}
 """
 
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            response = client.chat.completions.create(
-                model="chatgpt-4o-latest",
-                messages=[
-                    {"role": "system", "content": "You are a helpful assistant that extracts specific project details from document content."},
-                    {"role": "user", "content": prompt}
-                ]
-            )
-            return response.choices[0].message.content
-        except Exception as e:
-            if attempt < max_retries - 1:
-                time.sleep(2)  # Wait for 2 seconds before retrying
-                continue
-            else:
-                st.error(f"Error in extract_project_details: {str(e)}")
-                return "Error in extracting project details"
+    response = client.chat.completions.create(
+        model="gpt-4-turbo-preview",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that extracts project information."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+
+    result = response.choices[0].message.content
+    return [line.strip() for line in result.split('\n') if line.strip()]
 
 def process_pdfs(uploaded_files, api_key):
     results = []
+    projects = []
     client = OpenAI(api_key=api_key)
     
     for uploaded_file in uploaded_files:
@@ -93,43 +73,45 @@ def process_pdfs(uploaded_files, api_key):
             tmp_file.write(uploaded_file.getvalue())
             tmp_file_path = tmp_file.name
 
-        try:
-            doc = fitz.open(tmp_file_path)
-            total_pages = len(doc)
+        doc = fitz.open(tmp_file_path)
+        
+        for i in range(len(doc)):
+            page = doc.load_page(i)
+            text = page.get_text()
+            text = remove_special_characters(text)
             
-            for i in range(total_pages):
-                st.text(f"Processing page {i+1} of {total_pages} in {uploaded_file.name}")
-                page = doc.load_page(i)
-                text = page.get_text()
-                text = remove_special_characters(text)
-                
-                analysis = analyze_page(text, client)
-                
-                result = {
-                    'filename': uploaded_file.name,
-                    'page': i + 1,
-                    'summary': analysis.get('Summary', 'N/A'),
-                    'include_or_exclude': analysis.get('Include or Exclude', 'N/A'),
-                    'reason': analysis.get('Reason', 'N/A'),
-                    'projects': 'N/A'
-                }
-                
-                if result['include_or_exclude'].lower() == 'include':
-                    projects = extract_project_details(text, client)
-                    result['projects'] = projects
-                
-                results.append(result)
+            analysis = analyze_page(text, client)
             
-            doc.close()
-        except Exception as e:
-            st.error(f"Error processing {uploaded_file.name}: {str(e)}")
-        finally:
-            os.unlink(tmp_file_path)
+            result = {
+                'filename': uploaded_file.name,
+                'page': i + 1,
+                'summary': analysis.get('Summary', 'N/A'),
+                'include_or_exclude': analysis.get('Include or Exclude', 'N/A'),
+                'reason': analysis.get('Reason', 'N/A')
+            }
+            
+            if analysis.get('Include or Exclude', '').lower() == 'include':
+                page_projects = extract_projects(text, client)
+                projects.extend([(uploaded_file.name, i + 1, project) for project in page_projects])
+            
+            results.append(result)
+            
+            # Add a progress indicator
+            progress = (i + 1) / len(doc)
+            st.progress(progress)
+        
+        doc.close()
+        os.unlink(tmp_file_path)
     
-    return results
+    return results, projects
 
 def main():
     st.title("PDF Analysis App")
+    
+    if 'results' not in st.session_state:
+        st.session_state.results = None
+    if 'projects' not in st.session_state:
+        st.session_state.projects = None
     
     api_key = st.sidebar.text_input("OpenAI API Key", type="password")
     
@@ -137,31 +119,35 @@ def main():
     
     if uploaded_files and api_key:
         if st.button("Analyze PDFs"):
-            with st.spinner("Analyzing PDFs..."):
-                results = process_pdfs(uploaded_files, api_key)
-            
-            if results:
-                st.success("Analysis complete!")
-                
-                # Display projects for included pages
-                st.subheader("Extracted Projects")
-                for result in results:
-                    if result['include_or_exclude'].lower() == 'include':
-                        st.write(f"**File:** {result['filename']}, **Page:** {result['page']}")
-                        st.write(result['projects'])
-                        st.write("---")
-                
-                # Prepare CSV for download
-                df = pd.DataFrame(results)
-                csv = df.to_csv(index=False).encode('utf-8')
-                st.download_button(
-                    label="Download full results as CSV",
-                    data=csv,
-                    file_name="results.csv",
-                    mime="text/csv",
-                )
-            else:
-                st.warning("No results were generated. Please check your PDF files and try again.")
+            st.session_state.results = []
+            st.session_state.projects = []
+            for file in uploaded_files:
+                st.write(f"Analyzing {file.name}...")
+                results, projects = process_pdfs([file], api_key)
+                st.session_state.results.extend(results)
+                st.session_state.projects.extend(projects)
+            st.success("Analysis complete!")
+    
+    if st.session_state.results:
+        df = pd.DataFrame(st.session_state.results)
+        st.dataframe(df)
+        
+        csv = df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download results as CSV",
+            data=csv,
+            file_name="results.csv",
+            mime="text/csv",
+        )
+        
+        if st.session_state.projects:
+            if st.button("Show Projects"):
+                project_df = pd.DataFrame(st.session_state.projects, columns=['Filename', 'Page', 'Project'])
+                st.dataframe(project_df)
+        else:
+            st.info("No projects were found in the analyzed pages.")
+    elif uploaded_files:
+        st.info("Click 'Analyze PDFs' to start the analysis.")
     else:
         st.info("Please upload PDF files and provide an OpenAI API key to start the analysis.")
 
