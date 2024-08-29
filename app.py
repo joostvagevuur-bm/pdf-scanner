@@ -8,7 +8,16 @@ import requests
 
 # Constants for Claude 3.5 Sonnet
 CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
-CLAUDE_API_KEY = "YOUR_CLAUDE_API_KEY"
+
+# Use Streamlit's secrets management
+if 'CLAUDE_API_KEY' in st.secrets:
+    CLAUDE_API_KEY = st.secrets['CLAUDE_API_KEY']
+else:
+    CLAUDE_API_KEY = os.getenv('CLAUDE_API_KEY')  # Fallback to environment variable
+
+if not CLAUDE_API_KEY:
+    st.error("Claude API Key is not set. Please set it in Streamlit's secrets or as an environment variable.")
+    st.stop()
 
 def remove_special_characters(text):
     return re.sub(r"\s+", " ", text)
@@ -34,8 +43,7 @@ Reason: [Explain why this page should be included or excluded]
         "model": "claude-3-sonnet-20240229",
         "messages": [
             {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 1000
+        ]
     }
 
     response = requests.post(CLAUDE_API_URL, headers=headers, json=data)
@@ -57,12 +65,12 @@ Reason: [Explain why this page should be included or excluded]
 
 def extract_projects(text):
     prompt = f"""Analyze the following text and extract specific crane projects mentioned. For each project, provide:
-1. The number and type of cranes (e.g., RTG, STS)
-2. The location (port name and country if available)
+1. The exact number of cranes (if not specified, use a reasonable estimate based on the context)
+2. The type of cranes (e.g., RTG, STS)
+3. The location (port name and country if available)
 
 Format the output as a list of strings, each in the format: "[Number] [Type] cranes in [Location]"
-
-If multiple projects are mentioned, list each one separately. If the exact number is not specified, use "Multiple" for the number.
+Keep the descriptions concise and avoid using the word "multiple".
 
 Text to analyze:
 {text}
@@ -78,8 +86,7 @@ Text to analyze:
         "model": "claude-3-sonnet-20240229",
         "messages": [
             {"role": "user", "content": prompt}
-        ],
-        "max_tokens": 1000
+        ]
     }
 
     response = requests.post(CLAUDE_API_URL, headers=headers, json=data)
@@ -159,6 +166,17 @@ def process_pdfs(uploaded_files):
     return results, projects
 
 def main():
+    st.set_page_config(page_title="PDF Analysis App", page_icon="🏗️", layout="wide")
+
+    # Custom CSS to set white background
+    st.markdown("""
+        <style>
+        .stApp {
+            background-color: white;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+
     st.title("PDF Analysis App")
     
     if 'results' not in st.session_state:
@@ -166,14 +184,9 @@ def main():
     if 'projects' not in st.session_state:
         st.session_state.projects = None
     
-    claude_api_key = st.sidebar.text_input("Claude API Key", type="password")
-    
     uploaded_files = st.file_uploader("Choose PDF files", accept_multiple_files=True, type="pdf")
     
-    if uploaded_files and claude_api_key:
-        global CLAUDE_API_KEY
-        CLAUDE_API_KEY = claude_api_key
-
+    if uploaded_files:
         if st.button("Analyze PDFs"):
             with st.spinner("Analyzing PDFs..."):
                 st.session_state.results, st.session_state.projects = process_pdfs(uploaded_files)
@@ -182,12 +195,10 @@ def main():
     
     if st.session_state.results:
         st.subheader("Analysis Results")
-        df = pd.DataFrame(st.session_state.results)
-        st.dataframe(df)
         
-        csv = df.to_csv(index=False).encode('utf-8')
+        csv = pd.DataFrame(st.session_state.results).to_csv(index=False).encode('utf-8')
         st.download_button(
-            label="Download results as CSV",
+            label="Download analysis results as CSV",
             data=csv,
             file_name="pdf_analysis_results.csv",
             mime="text/csv",
