@@ -72,6 +72,7 @@ def extract_projects(text):
 
 Format the output as a list of strings, each in the format: "[Number] [Type] cranes in [Location]"
 Keep the descriptions concise and avoid using the word "multiple".
+Do not include any additional text, explanations, or formatting. Just provide the list of projects.
 
 Text to analyze:
 {text}
@@ -99,7 +100,10 @@ Text to analyze:
 
     result = response.json()['content'][0]['text']
 
-    return [line.strip() for line in result.split('\n') if line.strip()]
+    # Clean up the result and extract only the project lines
+    projects = [line.strip() for line in result.split('\n') if re.match(r'^\d+.*cranes\s+in\s+.*$', line.strip())]
+    
+    return projects
 
 def process_pdfs(uploaded_files):
     results = []
@@ -155,7 +159,12 @@ def process_pdfs(uploaded_files):
             
             if analysis.get('Include or Exclude', '').lower() == 'include':
                 page_projects = extract_projects(text)
-                projects.extend([(uploaded_file.name, i + 1, project) for project in page_projects])
+                for project in page_projects:
+                    projects.append({
+                        'filename': uploaded_file.name,
+                        'page': i + 1,
+                        'project': project
+                    })
             
             results.append(result)
             
@@ -199,7 +208,7 @@ def main():
     
     if st.session_state.projects:
         st.subheader("Extracted Projects")
-        projects_df = pd.DataFrame(st.session_state.projects, columns=['Filename', 'Page', 'Project'])
+        projects_df = pd.DataFrame(st.session_state.projects)
         st.dataframe(projects_df)
         
         projects_csv = projects_df.to_csv(index=False).encode('utf-8')
