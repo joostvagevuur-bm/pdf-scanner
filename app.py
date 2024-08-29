@@ -22,7 +22,7 @@ Reason: [Explain why this page should be included or excluded]
 """
 
     response = client.chat.completions.create(
-        model="gpt-4o-latest",
+        model="gpt-4o",
         messages=[
             {"role": "system", "content": "You are a helpful assistant that analyzes document content."},
             {"role": "user", "content": prompt}
@@ -53,7 +53,7 @@ Text to analyze:
 """
 
     response = client.chat.completions.create(
-        model="gpt-4o-latest",
+        model="gpt-4o",
         messages=[
             {"role": "system", "content": "You are a helpful assistant that extracts project information."},
             {"role": "user", "content": prompt}
