@@ -1,8 +1,6 @@
-import json
-
-from langchain_openai import ChatOpenAI
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
+from openai import OpenAI
+from langchain.prompts import ChatPromptTemplate
+from langchain.chat_models import ChatOpenAI
 from function_calling import SaveCSV
 
 storyOutlinePrompt = ChatPromptTemplate.from_template(
@@ -14,11 +12,10 @@ storyOutlinePrompt = ChatPromptTemplate.from_template(
 - Include or Exclude: Determine whether the section discusses a crane-related project. If it does, mark it as 'Include'. If it does not, mark it as 'Exclude'.
 - Reason: If a section is marked as 'Exclude', provide a brief explanation as to why this was done."
 - Articles discussing significant expansions of ports should be included, also if no mention of crane purchases are made
-- Modernization and upgrade projects in cranes are always related to the mechanical compontents or Digitization in these processes within cranes. Articles that are for instance discussing tires, wireless networks or fuel types should not be included.
+- Modernization and upgrade projects in cranes are always related to the mechanical components or Digitization in these processes within cranes. Articles that are for instance discussing tires, wireless networks or fuel types should not be included.
 - When in doubt, make sure to include the article.
 
 You have to call the function 'SaveCSV' after analyzing the page,all the parameters are required.
-
 
 page content:
 ```
@@ -27,18 +24,15 @@ page content:
 """
 )
 
-
 def init_openai(model, key, base):
-    return ChatOpenAI(model=model,
-                      openai_api_key=key,
-                      openai_api_base=base).bind_tools([SaveCSV])
-
+    client = OpenAI(api_key=key, base_url=base)
+    return ChatOpenAI(model=model, openai_api_key=key, openai_api_base=base)
 
 def analyze_page(page_content, oai_model):
     chain = storyOutlinePrompt | oai_model
     result = chain.invoke({"doc": page_content})
     try:
-        result = result.additional_kwargs['tool_calls'][0]['function']['arguments']
+        result = result.additional_kwargs['function_call']['arguments']
     except:
         print(result)
         return {"summary": "please check the content manually",
