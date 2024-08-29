@@ -168,15 +168,6 @@ def process_pdfs(uploaded_files):
 def main():
     st.set_page_config(page_title="PDF Analysis App", page_icon="🏗️", layout="wide")
 
-    # Custom CSS to set white background
-    st.markdown("""
-        <style>
-        .stApp {
-            background-color: white;
-        }
-        </style>
-        """, unsafe_allow_html=True)
-
     st.title("PDF Analysis App")
     
     if 'results' not in st.session_state:
