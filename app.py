@@ -1,11 +1,11 @@
 import streamlit as st
 import os
 import fitz  # PyMuPDF
+from openai import OpenAI
 import re
 import pandas as pd
-from tqdm import tqdm
 import tempfile
-from openai import OpenAI
+import json
 
 def remove_special_characters(text):
     return re.sub(r"\s+", " ", text)
@@ -23,7 +23,7 @@ Reason: [Explain why this page should be included or excluded]
 """
 
     response = client.chat.completions.create(
-        model="gpt-3.5-turbo",
+        model="chatgpt-4o-latest",
         messages=[
             {"role": "system", "content": "You are a helpful assistant that analyzes document content."},
             {"role": "user", "content": prompt}
@@ -31,7 +31,6 @@ Reason: [Explain why this page should be included or excluded]
     )
 
     result = response.choices[0].message.content
-    # Parse the result into a dictionary
     lines = result.split('\n')
     parsed_result = {}
     for line in lines:
@@ -41,8 +40,33 @@ Reason: [Explain why this page should be included or excluded]
 
     return parsed_result
 
+def extract_projects(text, client):
+    prompt = f"""Analyze the following text and extract specific crane projects mentioned. For each project, provide:
+1. The number and type of cranes (e.g., RTG, STS)
+2. The location (port name and country if available)
+
+Format the output as a list of strings, each in the format: "[Number] [Type] cranes in [Location]"
+
+If multiple projects are mentioned, list each one separately. If the exact number is not specified, use "Multiple" for the number.
+
+Text to analyze:
+{text}
+"""
+
+    response = client.chat.completions.create(
+        model="chatgpt-4o-latest",
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant that extracts project information."},
+            {"role": "user", "content": prompt}
+        ]
+    )
+
+    result = response.choices[0].message.content
+    return result.split('\n')
+
 def process_pdfs(uploaded_files, api_key):
     results = []
+    projects = []
     client = OpenAI(api_key=api_key)
     
     for uploaded_file in uploaded_files:
@@ -59,18 +83,24 @@ def process_pdfs(uploaded_files, api_key):
             
             analysis = analyze_page(text, client)
             
-            results.append({
+            result = {
                 'filename': uploaded_file.name,
                 'page': i + 1,
                 'summary': analysis.get('Summary', 'N/A'),
                 'include_or_exclude': analysis.get('Include or Exclude', 'N/A'),
                 'reason': analysis.get('Reason', 'N/A')
-            })
+            }
+            
+            if analysis.get('Include or Exclude') == 'Include':
+                page_projects = extract_projects(text, client)
+                projects.extend([(uploaded_file.name, i + 1, project) for project in page_projects])
+            
+            results.append(result)
         
         doc.close()
         os.unlink(tmp_file_path)
     
-    return results
+    return results, projects
 
 def main():
     st.title("PDF Analysis App")
@@ -82,7 +112,7 @@ def main():
     if uploaded_files and api_key:
         if st.button("Analyze PDFs"):
             with st.spinner("Analyzing PDFs..."):
-                results = process_pdfs(uploaded_files, api_key)
+                results, projects = process_pdfs(uploaded_files, api_key)
             
             if results:
                 df = pd.DataFrame(results)
@@ -96,6 +126,14 @@ def main():
                     file_name="results.csv",
                     mime="text/csv",
                 )
+                
+                if projects:
+                    st.button("Show Projects", key="show_projects")
+                    if st.session_state.show_projects:
+                        project_df = pd.DataFrame(projects, columns=['Filename', 'Page', 'Project'])
+                        st.dataframe(project_df)
+                else:
+                    st.info("No projects were found in the analyzed pages.")
             else:
                 st.warning("No results were generated. Please check your PDF files and try again.")
     else:
