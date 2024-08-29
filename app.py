@@ -6,8 +6,8 @@ import pandas as pd
 import tempfile
 import requests
 
-# Constants for Claude 3.5 (Sonnet)
-CLAUDE_API_URL = "https://api.anthropic.com/v1/complete"  # Example URL
+# Constants for Claude 3.5 Sonnet
+CLAUDE_API_URL = "https://api.anthropic.com/v1/messages"
 CLAUDE_API_KEY = "YOUR_CLAUDE_API_KEY"
 
 def remove_special_characters(text):
@@ -25,20 +25,26 @@ Include or Exclude: [State whether this page should be included or excluded base
 Reason: [Explain why this page should be included or excluded]
 """
     headers = {
-        "x-api-key": CLAUDE_API_KEY,
-        "Content-Type": "application/json"
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": CLAUDE_API_KEY
     }
 
     data = {
-        "model": "claude-3.5-sonnet",  # Use the correct model identifier
-        "prompt": prompt,
-        "max_tokens_to_sample": 1000,  # Adjust based on expected output size
-        "temperature": 0.7
+        "model": "claude-3-sonnet-20240229",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 1000
     }
 
     response = requests.post(CLAUDE_API_URL, headers=headers, json=data)
-    response.raise_for_status()
-    result = response.json()['completion']
+
+    if response.status_code != 200:
+        st.error(f"Error: {response.status_code} - {response.text}")
+        raise Exception(f"API Request failed: {response.text}")
+
+    result = response.json()['content'][0]['text']
 
     lines = result.split('\n')
     parsed_result = {}
@@ -63,20 +69,26 @@ Text to analyze:
 """
 
     headers = {
-        "x-api-key": CLAUDE_API_KEY,
-        "Content-Type": "application/json"
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-api-key": CLAUDE_API_KEY
     }
 
     data = {
-        "model": "claude-3.5-sonnet",
-        "prompt": prompt,
-        "max_tokens_to_sample": 1000,
-        "temperature": 0.7
+        "model": "claude-3-sonnet-20240229",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ],
+        "max_tokens": 1000
     }
 
     response = requests.post(CLAUDE_API_URL, headers=headers, json=data)
-    response.raise_for_status()
-    result = response.json()['completion']
+
+    if response.status_code != 200:
+        st.error(f"Error: {response.status_code} - {response.text}")
+        raise Exception(f"API Request failed: {response.text}")
+
+    result = response.json()['content'][0]['text']
 
     return [line.strip() for line in result.split('\n') if line.strip()]
 
@@ -163,37 +175,36 @@ def main():
         CLAUDE_API_KEY = claude_api_key
 
         if st.button("Analyze PDFs"):
-            st.session_state.results = []
-            st.session_state.projects = []
-            for file in uploaded_files:
-                st.write(f"Analyzing {file.name}...")
-                results, projects = process_pdfs([file])
-                st.session_state.results.extend(results)
-                st.session_state.projects.extend(projects)
+            with st.spinner("Analyzing PDFs..."):
+                st.session_state.results, st.session_state.projects = process_pdfs(uploaded_files)
+            
             st.success("Analysis complete!")
     
     if st.session_state.results:
+        st.subheader("Analysis Results")
         df = pd.DataFrame(st.session_state.results)
+        st.dataframe(df)
         
         csv = df.to_csv(index=False).encode('utf-8')
         st.download_button(
             label="Download results as CSV",
             data=csv,
-            file_name="results.csv",
+            file_name="pdf_analysis_results.csv",
             mime="text/csv",
         )
+    
+    if st.session_state.projects:
+        st.subheader("Extracted Projects")
+        projects_df = pd.DataFrame(st.session_state.projects, columns=['Filename', 'Page', 'Project'])
+        st.dataframe(projects_df)
         
-        if st.session_state.projects:
-            if st.button("Show Projects"):
-                project_df = pd.DataFrame(st.session_state.projects, columns=['Filename', 'Page', 'Project'])
-                st.write("### Extracted Projects")
-                st.table(project_df)
-        else:
-            st.info("No projects were found in the analyzed pages.")
-    elif uploaded_files:
-        st.info("Click 'Analyze PDFs' to start the analysis.")
-    else:
-        st.info("Please upload PDF files and provide an API key to start the analysis.")
+        projects_csv = projects_df.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label="Download projects as CSV",
+            data=projects_csv,
+            file_name="extracted_projects.csv",
+            mime="text/csv",
+        )
 
 if __name__ == "__main__":
     main()
