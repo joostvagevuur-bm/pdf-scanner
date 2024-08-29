@@ -1,164 +1,97 @@
-import streamlit as st
-import os
-import fitz  # PyMuPDF
-from openai import OpenAI
-import re
-import pandas as pd
-import tempfile
+Thank you for providing the information about the script and the error you're encountering. Let's take a look at the error and see how we can resolve it.
 
-def remove_special_characters(text):
-    return re.sub(r"\s+", " ", text)
+The error message you're seeing is:
 
-def analyze_page(page_content, client):
-    prompt = f"""Given a page from a document containing various articles, analyze the content and identify sections that are related to crane projects. These projects could be about the purchasing of new cranes, expansion of ports that require new cranes, or modernization of cranes. The page may contain multiple articles or parts of articles.
+```
+EmptyFileError: Cannot open empty file: filename='/tmp/tmp69f9je9a.pdf'.
+```
 
-Page content:
-{page_content}
+This error is occurring in the `process_pdfs` function, specifically when trying to open a PDF file using PyMuPDF (fitz). The error suggests that the file being opened is empty.
 
-Provide a response in the following format:
-Summary: [A brief summary of the page content]
-Include or Exclude: [State whether this page should be included or excluded based on relevance to crane projects]
-Reason: [Explain why this page should be included or excluded]
-"""
+There are a few potential reasons for this issue:
 
-    response = client.chat.completions.create(
-        model="gpt-4o-latest",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant that analyzes document content."},
-            {"role": "user", "content": prompt}
-        ]
-    )
+1. The uploaded file might be empty.
+2. There might be an issue with how the file is being saved temporarily before processing.
+3. There could be a problem with file permissions or how Streamlit is handling the file upload.
 
-    result = response.choices[0].message.content
-    lines = result.split('\n')
-    parsed_result = {}
-    for line in lines:
-        if ':' in line:
-            key, value = line.split(':', 1)
-            parsed_result[key.strip()] = value.strip()
+Let's modify the `process_pdfs` function to add some error handling and debugging information. Here's an updated version of the function:
 
-    return parsed_result
 
-def extract_projects(text, client):
-    prompt = f"""Analyze the following text and extract specific crane projects mentioned. For each project, provide:
-1. The number and type of cranes (e.g., RTG, STS)
-2. The location (port name and country if available)
 
-Format the output as a list of strings, each in the format: "[Number] [Type] cranes in [Location]"
-
-If multiple projects are mentioned, list each one separately. If the exact number is not specified, use "Multiple" for the number.
-
-Text to analyze:
-{text}
-"""
-
-    response = client.chat.completions.create(
-        model="gpt-4o-latest",
-        messages=[
-            {"role": "system", "content": "You are a helpful assistant that extracts project information."},
-            {"role": "user", "content": prompt}
-        ]
-    )
-
-    result = response.choices[0].message.content
-    return [line.strip() for line in result.split('\n') if line.strip()]
-
+```python
 def process_pdfs(uploaded_files, api_key):
     results = []
     projects = []
     client = OpenAI(api_key=api_key)
     
-    total_pages = sum(len(fitz.open(tempfile.NamedTemporaryFile(delete=False, suffix=".pdf").name)) for uploaded_file in uploaded_files)
-    progress_bar = st.progress(0)
-    current_page = 0
-    
     for uploaded_file in uploaded_files:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
-            tmp_file.write(uploaded_file.getvalue())
-            tmp_file_path = tmp_file.name
-
-        # Check if the file is empty before proceeding
-        if os.path.getsize(tmp_file_path) == 0:
-            st.warning(f"The file {uploaded_file.name} is empty and will be skipped.")
+        st.write(f"Processing file: {uploaded_file.name}")
+        st.write(f"File size: {uploaded_file.size} bytes")
+        
+        try:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                tmp_file.write(uploaded_file.getvalue())
+                tmp_file_path = tmp_file.name
+            
+            st.write(f"Temporary file created: {tmp_file_path}")
+            st.write(f"Temporary file size: {os.path.getsize(tmp_file_path)} bytes")
+            
+            if os.path.getsize(tmp_file_path) == 0:
+                st.error(f"The file {uploaded_file.name} is empty. Skipping this file.")
+                continue
+            
+            doc = fitz.open(tmp_file_path)
+            
+            for i in range(len(doc)):
+                page = doc.load_page(i)
+                text = page.get_text()
+                text = remove_special_characters(text)
+                
+                analysis = analyze_page(text, client)
+                
+                result = {
+                    'filename': uploaded_file.name,
+                    'page': i + 1,
+                    'summary': analysis.get('Summary', 'N/A'),
+                    'include_or_exclude': analysis.get('Include or Exclude', 'N/A'),
+                    'reason': analysis.get('Reason', 'N/A')
+                }
+                
+                if analysis.get('Include or Exclude', '').lower() == 'include':
+                    page_projects = extract_projects(text, client)
+                    projects.extend([(uploaded_file.name, i + 1, project) for project in page_projects])
+                
+                results.append(result)
+                
+                # Add a progress indicator
+                progress = (i + 1) / len(doc)
+                st.progress(progress)
+            
+            doc.close()
             os.unlink(tmp_file_path)
+        
+        except Exception as e:
+            st.error(f"An error occurred while processing {uploaded_file.name}: {str(e)}")
             continue
-
-        doc = fitz.open(tmp_file_path)
-        
-        for i in range(len(doc)):
-            page = doc.load_page(i)
-            text = page.get_text()
-            text = remove_special_characters(text)
-            
-            analysis = analyze_page(text, client)
-            
-            result = {
-                'filename': uploaded_file.name,
-                'page': i + 1,
-                'summary': analysis.get('Summary', 'N/A'),
-                'include_or_exclude': analysis.get('Include or Exclude', 'N/A'),
-                'reason': analysis.get('Reason', 'N/A')
-            }
-            
-            if analysis.get('Include or Exclude', '').lower() == 'include':
-                page_projects = extract_projects(text, client)
-                projects.extend([(uploaded_file.name, i + 1, project) for project in page_projects])
-            
-            results.append(result)
-            
-            current_page += 1
-            progress_bar.progress(current_page / total_pages)
-        
-        doc.close()
-        os.unlink(tmp_file_path)
     
     return results, projects
 
-def main():
-    st.title("PDF Analysis App")
-    
-    if 'results' not in st.session_state:
-        st.session_state.results = None
-    if 'projects' not in st.session_state:
-        st.session_state.projects = None
-    
-    api_key = st.sidebar.text_input("OpenAI API Key", type="password")
-    
-    uploaded_files = st.file_uploader("Choose PDF files", accept_multiple_files=True, type="pdf")
-    
-    if uploaded_files and api_key:
-        if st.button("Analyze PDFs"):
-            st.session_state.results = []
-            st.session_state.projects = []
-            for file in uploaded_files:
-                st.write(f"Analyzing {file.name}...")
-                results, projects = process_pdfs([file], api_key)
-                st.session_state.results.extend(results)
-                st.session_state.projects.extend(projects)
-            st.success("Analysis complete!")
-    
-    if st.session_state.results:
-        df = pd.DataFrame(st.session_state.results)
-        
-        csv = df.to_csv(index=False).encode('utf-8')
-        st.download_button(
-            label="Download results as CSV",
-            data=csv,
-            file_name="results.csv",
-            mime="text/csv",
-        )
-        
-        if st.session_state.projects:
-            if st.button("Show Projects"):
-                project_df = pd.DataFrame(st.session_state.projects, columns=['Filename', 'Page', 'Project'])
-                st.write("### Extracted Projects")
-                st.table(project_df)
-        else:
-            st.info("No projects were found in the analyzed pages.")
-    elif uploaded_files:
-        st.info("Click 'Analyze PDFs' to start the analysis.")
-    else:
-        st.info("Please upload PDF files and provide an OpenAI API key to start the analysis.")
+```
 
-if __name__ == "__main__":
-    main()
+This updated version of the `process_pdfs` function includes several improvements:
+
+1. It adds more detailed logging using `st.write()` to show the progress of file processing.
+2. It checks if the temporary file is empty before trying to open it with PyMuPDF.
+3. It wraps the entire processing of each file in a try-except block to catch and report any errors without crashing the entire process.
+
+To use this updated function, you'll need to replace the existing `process_pdfs` function in your `app.py` file with this new version.
+
+Additionally, make sure that the PDF files you're uploading are not empty and are valid PDF files. The error you're seeing suggests that an empty file is being uploaded or created during the process.
+
+If you're still encountering issues after making these changes, please try the following:
+
+1. Upload a single, known-good PDF file and see if it processes correctly.
+2. Check if there are any permission issues in the directory where Streamlit is running.
+3. Ensure that you have the latest versions of the required libraries installed, especially PyMuPDF and Streamlit.
+
+If the problem persists, please provide more information about the PDF files you're trying to upload (size, number of pages, etc.) and any additional error messages you might see after implementing these changes.
